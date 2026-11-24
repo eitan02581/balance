@@ -80,6 +80,7 @@ npx vercel --prod
 | `npm run dev` | Run locally |
 | `npm run sync` | Pull the last 45 days (`-- --full` for 12 months, `-- --days 90`) |
 | `npm run sync -- --reclassify` | Re-run the category rules over stored rows (no Financy call) |
+| `npm run sync -- --fix-amounts` | Recompute stored amounts from the raw Financy rows (foreign-currency card charges → ILS), then reclassify (no Financy call) |
 | `npm run probe` | Print Financy connections, accounts and sample rows |
 | `npm run seed:demo` | Reset the demo database with fake data |
 | `npm test` · `npm run typecheck` | Unit tests · type check |

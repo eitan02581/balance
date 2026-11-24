@@ -7,7 +7,8 @@ import { isDemo } from "@/lib/demo"
 import { merchantKey } from "@/lib/classify/rules"
 import { addDays, monthKey, todayIL } from "@/lib/money"
 import { fetchAll } from "./client"
-import { balanceAmount, num, txAmount, txCategory, txDate, txDescription, txDetails, withoutSupersededPending, type FinancyAccount, type FinancyConnection, type FinancyTransaction } from "./types"
+import { fetchBoiRates, FALLBACK_ILS_RATES } from "@/lib/fx"
+import { balanceAmount, needsFx, num, txAmountInfo, txCategory, txDate, txDescription, txDetails, withoutSupersededPending, type FinancyAccount, type FinancyConnection, type FinancyTransaction } from "./types"
 
 export type SyncResult = { runId: number; connections: number; accounts: number; txUpserted: number; reclassified: number; dateFrom: string; dateTo: string }
 
@@ -78,11 +79,13 @@ export async function runSync({ days = 45, full = false }: { days?: number; full
       const to = addDays(from, CHUNK_DAYS - 1) < dateTo ? addDays(from, CHUNK_DAYS - 1) : dateTo
       items.push(...(await fetchAll<FinancyTransaction>("/data/transactions", { dateFrom: from, dateTo: to, includeDuplicates: 0 })))
     }
-    const rows = withoutSupersededPending(items)
-      .filter((t) => t.id && t.accountId && txDate(t))
-      .map((t) => {
+    const kept = withoutSupersededPending(items).filter((t) => t.id && t.accountId && txDate(t))
+    // Purchases abroad not yet billed in ILS (e.g. JPY) are converted at today's Bank of Israel rate.
+    const rates = kept.some(needsFx) ? await fetchBoiRates() : FALLBACK_ILS_RATES
+    const rows = kept.map((t) => {
         const cat = txCategory(t)
         const date = txDate(t)!
+        const money = txAmountInfo(t, rates)
         return {
           id: t.id,
           accountId: t.accountId,
@@ -93,8 +96,8 @@ export async function runSync({ days = 45, full = false }: { days?: number; full
           description: txDescription(t),
           details: txDetails(t),
           merchantKey: merchantKey(t.merchantName, txDescription(t), txDetails(t)) || null,
-          amount: txAmount(t),
-          currency: t.amount?.chargedAmount?.currency ?? null,
+          amount: money.amount, // always ILS
+          currency: money.sourceCurrency, // "ILS", or the foreign currency the amount was converted from (an estimate)
           transactionDate: date,
           bookingDate: t.date?.bookingDate?.slice(0, 10) ?? null,
           month: monthKey(date),
