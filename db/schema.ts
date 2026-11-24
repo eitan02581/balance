@@ -67,7 +67,7 @@ export const transactions = pgTable(
     merchantKey: text("merchant_key"), // normalised merchant (+ counterparty for Bit/transfers); a category change propagates by this key
     note: text("note"), // user's free-text note (e.g. "ההורים משלמים")
     amount: money("amount").notNull(), // signed, negative = debit
-    currency: text("currency"),
+    currency: text("currency"), // "ILS", or the foreign currency `amount` was converted from (estimate until billed in ILS)
     transactionDate: text("transaction_date").notNull(), // YYYY-MM-DD
     bookingDate: text("booking_date"),
     month: text("month").notNull(), // YYYY-MM

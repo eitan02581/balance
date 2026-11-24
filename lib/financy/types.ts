@@ -1,3 +1,5 @@
+import { FALLBACK_ILS_RATES, isIls, toIls, type FxRates } from "@/lib/fx"
+
 export type FinancyPage<T> = { count?: number; nextPage?: string | null; items: T[] }
 
 export type FinancyConnection = {
@@ -75,13 +77,47 @@ export function balanceAmount(b: FinancyBalance | undefined): number | null {
 }
 
 /**
- * What actually left the account. Issuers report a fully-discounted fee as chargedAmount "" with the list price in
- * originalAmount (Isracard/AMEX/CAL "דמי כרטיס", CAL CashPro info lines): that is a ₪0 charge, not the list price.
+ * What actually left the account, in ILS (every total in the app is shekels).
+ *
+ * Issuers report a fully-discounted fee as chargedAmount "" with the list price in originalAmount (Isracard/AMEX/CAL
+ * "דמי כרטיס", CAL CashPro info lines): that is a ₪0 charge, not the list price.
+ *
+ * A purchase abroad that the issuer has not converted yet (typically PENDING, sometimes the current cycle) comes with
+ * chargedAmount in the foreign currency (e.g. JPY), or with no chargedAmount at all and only a foreign originalAmount.
+ * Taking that number as shekels made ¥10,000 show up as ₪10,000. Such rows are converted with `rates`; the issuer's
+ * real ILS charge replaces the estimate on a later sync. No currency on a field means ILS.
  */
-export function txAmount(t: FinancyTransaction) {
+export function txAmount(t: FinancyTransaction, rates: FxRates = FALLBACK_ILS_RATES) {
+  return txAmountInfo(t, rates).amount
+}
+
+/** {@link txAmount} plus the currency the number was taken from (before conversion) and whether it was converted. */
+export function txAmountInfo(t: FinancyTransaction, rates: FxRates = FALLBACK_ILS_RATES): { amount: number; sourceCurrency: string; converted: boolean } {
   const charged = t.amount?.chargedAmount
-  if (charged && (charged.amount as unknown) === "") return 0
-  return num(charged?.amount) ?? num(t.amount?.originalAmount?.amount) ?? 0
+  const original = t.amount?.originalAmount
+  if (charged && (charged.amount as unknown) === "") return { amount: 0, sourceCurrency: "ILS", converted: false }
+  const c = num(charged?.amount)
+  const o = num(original?.amount)
+  const originalForeign = o !== null && o !== 0 && !isIls(original?.currency)
+
+  // Charged amount is the truth when it is in shekels, except a ₪0 placeholder on a foreign purchase not yet billed.
+  if (c !== null && isIls(charged?.currency) && !(c === 0 && originalForeign)) return { amount: c, sourceCurrency: "ILS", converted: false }
+  // Charged, but in a foreign currency: convert it.
+  if (c !== null && c !== 0 && !isIls(charged?.currency)) return convert(c, charged!.currency!, rates)
+  // No usable charge yet: fall back to the original amount, converting it if it is foreign.
+  if (o !== null) return originalForeign ? convert(o, original!.currency!, rates) : { amount: o, sourceCurrency: "ILS", converted: false }
+  return { amount: c ?? 0, sourceCurrency: "ILS", converted: false }
+}
+
+function convert(amount: number, currency: string, rates: FxRates) {
+  const ils = toIls(amount, currency, rates)
+  if (ils === null) console.warn(`No ILS rate for ${currency}; counting the transaction as ₪0 until the issuer bills it in ILS`)
+  return { amount: ils ?? 0, sourceCurrency: currency.trim().toUpperCase(), converted: true }
+}
+
+/** True when the transaction has no ILS charge yet and needs exchange rates to be counted. */
+export function needsFx(t: FinancyTransaction) {
+  return txAmountInfo(t).converted
 }
 
 /** Day of the transaction, YYYY-MM-DD. Bank rows come with transactionDate=null; bookingDate is the day the money moved. */
